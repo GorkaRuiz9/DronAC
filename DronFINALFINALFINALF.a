@@ -1,0 +1,1213 @@
+
+						;_______________EQUs______________________
+						; Registros y variables utilizadas
+
+DES_ATE		EQU		0x80.7		; Botón de despegue/aterrizaje
+PAR_AVA		EQU		0x80.6		; Botón de parar/avanzar
+AUT_MAN		EQU		0x80.5		; Seleccionador automático/manual
+G_IZDA		EQU		0x80.3		; Botón girar izquierda
+G_DCHA		EQU		0x80.2		; Botón girar derecha
+SUBE		EQU		0x80.1		; Botón subir
+BAJA		EQU		0x80.0		; Botón bajar
+
+GIR_AVA0	EQU		0x90.6		; Output para controlar el giro/avance
+GIR_AVA1	EQU		0x90.7		; Output para controlar el giro/avance
+
+LED_VERDE	EQU		0x90.5		; Led verde
+LED_ROJO	EQU		0x90.4		; Led rojo
+
+INDICE		EQU		R7		; Variable que se utilizará para el acceso a tablas
+
+PWM0 		EQU		0xFC		; PWM0
+PWM1		EQU		0xFD		; PWM1
+PMWP		EQU		0xFE		; PWMP
+
+SIETE_SEG	EQU		0x27		; Aquí guardaremos la información que irá al display de siete segmentos
+ESTADO		EQU		R4		; Aquí guardaremos el estado actual
+EVENTO		EQU		R5		; Aquí guardaremos el evento actual
+EVENTO_ANT	EQU		R6		; Aquí guardaremos el estado anterior
+
+ALTURA		EQU		0x30		; Una vez leído el valor de la altura en el ADC se guardará en esta variable
+FRENTE		EQU		0x31		; Una vez leído el valor de frente en el ADC se guardará en esta variable
+BATERIA 	EQU		0x32		; Una vez leído el valor de la batería en el ADC se guardará en esta variable
+
+CONT1		EQU		0x10		; Diferentes contadores para utilizar en los timers
+CONT2		EQU		0x11
+CONT3		EQU		0x12
+CONT4		EQU		0x13
+CONT5		EQU		0x14
+
+EAD 		EQU 		0xA8.6 		; Variables relacionadas con el ADC
+ADCON 		EQU 		0xC5
+ADCH 		EQU 		0xC6 
+
+
+FLAG_25S	EQU		0x2F.1		; Diferentes flags utilizadas
+FLAG_8S		EQU		0x2F.2
+FLAG_05S	EQU		0x2F.3
+FLAG_ALTURA	EQU		0x2F.3
+
+ORG 0x00					; Hace que la primera instruccion esté en esta posició de memoria
+		JMP MAIN
+
+	
+ORG 0x000B	
+		AJMP TIMER0_INT_SB
+
+ORG 0x001B
+		AJMP TIMER1_INT_SB
+		
+
+MAIN:						;_______________PROGRAMA PRINCIPAL_______________
+		ACALL INIC			; Se hacen las inicializaciones
+		LAZO:
+		ACALL MAQ_ESTADOS		; Se llama a la maquina de estados (Cada estado tiene su generador de eventos)
+		AJMP LAZO			; Se hace el bucle
+
+
+INIC:
+		SETB EA 			; Habilitador global de interrupciones habilitado
+ 		SETB ET0 			; Interrupción del timer0 habilitada
+		SETB ET1			; Interrupción del timer1 habilitada
+ 		MOV TMOD,#0X11 			; Timer0 y Timer1 de 16 bits     	
+ 		CLR EAD 			; Interrupcion del ADC deshabilitada
+		MOV CONT1,#00			; Inicialización de las variables, todos a cero
+		MOV CONT2,#00h
+		MOV CONT3,#00h
+		MOV CONT4,#00h
+		MOV CONT5,#00h
+		MOV ESTADO,#00h
+		MOV EVENTO,#00h
+		MOV EVENTO_ANT,#00h
+		MOV INDICE,#00h
+		MOV SIETE_SEG,#00h
+		MOV PMWP,#93d			; Viene de la formula de ajuste (Hoja 46 derivatives)
+		CLR AUT_MAN
+		CLR DES_ATE
+		CLR PAR_AVA
+		CLR G_DCHA
+		CLR G_IZDA
+		CLR SUBE
+		CLR BAJA
+		CLR GIR_AVA0
+		CLR GIR_AVA1
+		CLR LED_VERDE
+		CLR LED_ROJO
+		CLR FLAG_25S
+		CLR FLAG_8S
+		CLR FLAG_05S
+		CLR FLAG_ALTURA
+
+		RET
+
+MAQ_ESTADOS:					;_______________MAQUINA DE ESTADOS_______________		
+	
+		MOV 	A,ESTADO		; Con estas instrucciones se salta al estado indicado de la lista de estados	
+		RL 	A				
+		MOV 	DPTR,#LISTA_ESTADOS	
+		JMP 	@A+DPTR	
+
+LISTA_ESTADOS:
+		AJMP REPOSO			;Estado 0: REPOSO
+		AJMP AUTOMATICO			;Estado 1: AUTOMATICO
+		AJMP AUT_DRA			;Estado 2: AUTOMATICO_DRA, cuando en modo automatico el drón gira a la derecha
+		AJMP AUT_IZQ			;Estado 3: AUTOMATICO_IZQ, cuando en modo automatico el drón gira a la izquierda
+		AJMP MANUAL			;Estado 4: MANUAL
+		AJMP ATERRIZAJE			;Estado 5: ATERRIZAJE	
+
+REPOSO:						;_______________ESTADO 0: REPOSO_______________
+
+		ACALL 	GEN_EVE_REPOSO		; Se llama al generador de eventos del estado, y al igual que en la maquina se salta al evento indicado 	
+		MOV 	A,EVENTO
+		RL 	A
+		MOV 	DPTR,#EVENTOS_REPOSO
+		JMP 	@A+DPTR
+
+EVENTOS_REPOSO:
+		AJMP 	E0_EV0			; estado 0 evento 0
+		AJMP  	E0_EV1			; estado 0 evento 1
+		AJMP  	E0_EV2			; estado 0 evento 2
+
+E0_EV0:
+		RET				; Evento cero no hace nada
+
+E0_EV1:
+		MOV ESTADO,#01			; Cambia al estado automático
+		ACALL ENCENDER_TIMER0		; Encender timer0
+		RET
+
+E0_EV2:
+		MOV ESTADO,#04			; Cambia al estado manual
+		ACALL ENCENDER_TIMER0		; Encender timer0
+		RET
+
+
+GEN_EVE_REPOSO:
+		MOV A,BATERIA
+		CLR C
+		SUBB A, #01h			; Restamos el valor 01h, que viene a ser un 6% en batería: ([(4,883*6)]/1000)/5)*1024=6d, en el ADCH = 01h
+		JC NO_DESPEGA			; Si hay carry, es decir, el valor guardado en la batería es menor a 6, saltar
+		JB DES_ATE,ACTIVAR		; Si el despegue/aterrizaje está encendido salta
+		MOV EVENTO,#00			; Sino se le asigna el evento 0
+		RET
+
+NO_DESPEGA:
+		MOV EVENTO,#00
+		RET
+ACTIVAR:
+		JB AUT_MAN, ACTIVAR_MAN		; Si el seleccionador esta en manual (1) salta
+		MOV EVENTO,#01			; Sino se le asigna el evento 1
+		RET
+
+ACTIVAR_MAN:
+		MOV EVENTO,#02			; Se le asigna el evento 2
+		RET
+		
+
+AUTOMATICO:					;_______________ESTADO 1: AUTOMATIC0_______________
+
+		ACALL 	GEN_EVE_AUTOMATICO	; Funciona como el estado anterior, y funcionan todos igual
+		MOV 	A,EVENTO
+		RL 	A
+		MOV 	DPTR,#EVENTOS_AUTOMATICO
+		JMP 	@A+DPTR
+		RET
+
+
+EVENTOS_AUTOMATICO:
+		AJMP 	E1_EV0			; Estado 1 evento 0
+		AJMP 	E1_EV1			; Estado 1 evento 1
+		AJMP 	E1_EV2			; Estado 1 evento 2
+		AJMP 	E1_EV3			; Estado 1 evento 3
+		AJMP 	E1_EV4			; Estado 1 evento 4
+		AJMP 	E1_EV5			; Estado 1 evento 5
+		AJMP 	E1_EV6			; Estado 1 evento 6
+		AJMP    E1_EV7			; Estado 1 evento 7
+
+E1_EV0:
+		RET
+
+E1_EV1:
+		MOV INDICE,#03
+		ACALL VALORES_PWM		; Gracias al índice va a la tabla de valores para el PWM y toma el valor
+		MOV PWM0,A			; En este caso se la pasa el valor B3 que sería "bajar"
+
+		MOV INDICE,#00		
+		ACALL VALORES_PWM		; Gracias al índice va a la tabla de valores para el PWM y toma el valor
+		MOV PWM1,A			; En este caso se la pasa el valor FF que sería "parado"
+
+		CLR GIR_AVA1			; Combinación de los bits Giro_Avance = "Parado"
+		CLR GIR_AVA0
+		RET
+
+E1_EV2:
+		MOV INDICE,#01		
+		ACALL VALORES_PWM 		; Gracias al índice va a la tabla de valores para el PWM y toma el valor
+		MOV PWM0,A			; En este caso se la pasa el valor 80 que sería "mantiene altura"
+
+		MOV INDICE,#00
+		ACALL VALORES_PWM		; Gracias al índice va a la tabla de valores para el PWM y toma el valor
+		MOV PWM1,A			; En este caso se la pasa el valor FF que sería "parado"
+
+		CLR GIR_AVA1			; Combinación de los bits Giro_Avance = "Parado"
+		CLR GIR_AVA0
+		
+		MOV CONT3,#00
+		CLR FLAG_25S
+		CLR FLAG_ALTURA			; Se apaga el flag, eso quiere decir que la altura es correcta (1m)
+
+		RET
+
+E1_EV3:
+		MOV INDICE,#02
+		ACALL VALORES_PWM		; Gracias al índice va a la tabla de valores para el PWM y toma el valor
+		MOV PWM0,A			; En este caso se la pasa el valor 4D que sería "sube"
+
+		MOV INDICE,#00
+		ACALL VALORES_PWM		; Gracias al índice va a la tabla de valores para el PWM y toma el valor
+		MOV PWM1,A			; En este caso se la pasa el valor FF que sería "parado"
+
+		CLR GIR_AVA1			; Combinación de los bits Giro_Avance = "Parado"
+		CLR GIR_AVA0
+		RET
+
+E1_EV4:
+		MOV INDICE,#03
+		ACALL VALORES_PWM		; Gracias al índice va a la tabla de valores para el PWM y toma el valor
+		MOV PWM0,A			; En este caso se la pasa el valor B3 que sería "bajar"
+
+		MOV INDICE,#00
+		ACALL VALORES_PWM		; Gracias al índice va a la tabla de valores para el PWM y toma el valor
+		MOV PWM1,A			; En este caso se la pasa el valor FF que sería "parado"
+
+		CLR GIR_AVA1			; Combinación de los bits Giro_Avance = "Parado"
+		CLR GIR_AVA0
+
+		MOV ESTADO,#05h			; Cambiamos al estado de aterrizaje
+		RET
+
+E1_EV5:
+		MOV INDICE,#01
+		ACALL VALORES_PWM		; Gracias al índice va a la tabla de valores para el PWM y toma el valor
+		MOV PWM0,A			; En este caso se la pasa el valor 80 que sería "mantener altura"
+
+		MOV INDICE,#01
+		ACALL VALORES_PWM		; Gracias al índice va a la tabla de valores para el PWM y toma el valor
+		MOV PWM1,A			; En este caso se la pasa el valor 80 que sería "giro/avance"
+	
+		SETB GIR_AVA1			; Combinación de los bits Giro_Avance = "Giro_dcha"
+		CLR GIR_AVA0
+
+		MOV ESTADO,#02			; Cambiamos al estado 2
+
+		MOV CONT3,#00			; Reseteamos el contador 3
+		ACALL ENCENDER_TIMER1		; Encendemos el timer1
+
+		RET
+
+E1_EV6:
+		MOV INDICE,#01
+		ACALL VALORES_PWM		; Gracias al índice va a la tabla de valores para el PWM y toma el valor
+		MOV PWM0,A			; En este caso se la pasa el valor 80 que sería "mantener altura"	
+
+		MOV INDICE,#01
+		ACALL VALORES_PWM		; Gracias al índice va a la tabla de valores para el PWM y toma el valor
+		MOV PWM1,A			; En este caso se la pasa el valor 80 que sería "giro/avance"
+
+		CLR GIR_AVA1			; Combinación de los bits Giro_Avance = "Giro_izda"
+		SETB GIR_AVA0
+
+		CLR FLAG_25S			; Limpiar el flag de 25 segundos
+
+		MOV ESTADO,#03			; Cambiamos al estado 3
+
+		MOV CONT3,#00			; Reseteamos el contador 3
+		ACALL ENCENDER_TIMER1		; Encendemos el timer1
+
+		RET
+
+
+E1_EV7:
+		MOV INDICE,#01
+		ACALL VALORES_PWM		; Gracias al índice va a la tabla de valores para el PWM y toma el valor
+		MOV PWM0,A			; En este caso se la pasa el valor 80 que sería "mantener altura"
+
+		MOV INDICE,#00
+		ACALL VALORES_PWM		; Gracias al índice va a la tabla de valores para el PWM y toma el valor
+		MOV PWM1,A			; En este caso se la pasa el valor FF que sería "parado"
+	
+		CLR GIR_AVA1			; Combinación de los bits Giro_Avance = "Parado"
+		CLR GIR_AVA0
+
+		MOV ESTADO,#04			; Cambiamos al estado 4
+
+		RET
+
+GEN_EVE_AUTOMATICO:
+		MOV A,BATERIA
+		CLR C
+		SUBB A, #01h			; Restamos el valor 01h, que viene a ser un 6% en batería: ([(4,883*6)]/1000)/5)*1024=6d, en el ADCH = 01h	
+		JC ATERRIZAR_AUT		; Si hay carry, es decir, el valor guardado en la batería es menor a 6, saltar
+		JB DES_ATE,ATERRIZAR_AUT	; Si despegue/aterrizaje es 1, saltar
+		JB AUT_MAN,CAMBIO_MAN		; Si el seleccionador esta en manual, salta
+		JNB FLAG_ALTURA,CORREGIR_ALTURA	; Si la altura no es correcta (0), salta
+		MOV A,FRENTE
+		CLR C
+		SUBB A,#22h			; Restamos el valor 22h, que vienen a ser 0,4 metros: ([(16,667*40)]/1000)/5)*1024=137d, en el ADCH = 22h
+		JC OBSTACULO			; Si hay carry, es decir, el valor guardado en frente es menor a 0.4, saltar
+		JB FLAG_25S,AVANCE		; Si el flag de 25 segundos está encendido, salta
+		MOV EVENTO,#00			; Si no se cumple ninguna de las anteriores, se asigna el evento 0
+		RET
+
+CAMBIO_MAN:
+		MOV EVENTO,#07			; Se le asigna elevento 7
+		RET
+
+CORREGIR_ALTURA:
+		MOV A,ALTURA			; Una sucesión para ver en que rango de altura está el drón
+		CLR C
+		SUBB A,#66h			; Restamos el valor 66h, que vienen a ser 1.2 metros: ([(16,667*120)]/1000)/5)*1024=410d en el ADCH = 66h
+		JNC BAJAR_AUT			; Si no hay carry, es decir, el valor guardado es mayor a 1.2, saltar
+		MOV A,ALTURA
+		CLR C
+		SUBB A,#55h			; Restamos el valor 55h ue viene a ser 1 metro: ([(16,667*100)]/1000)/5)*1024=34d en el ADCH = 55h
+		JZ MANTENER			; Si es cero, es decir, el valor guardado es 1, saltar
+		MOV A,ALTURA
+		CLR C
+		SUBB A,#44h			; Restamos el valor 44h ue vienen a ser 0.8 metros: ([(16,667*80)]/1000)/5)*1024=273d en el ADCH = 44h
+		JC SUBIR_AUT			; Si hay carry, es decir, el valor guardado es menor a 0.8, saltar
+		MOV EVENTO,#00			; Se le asigna el evento 0 por si todavia tiene que seguir subiendo o bajando
+		RET
+
+BAJAR_AUT:
+		MOV EVENTO,#01			; Se le asigna el evento 1
+		RET
+
+MANTENER:	
+		MOV EVENTO,#02			; Se le asigna el evento 2
+		RET
+
+SUBIR_AUT:
+		MOV EVENTO,#03			; Se le asigna el evento 3
+		RET
+
+ATERRIZAR_AUT:
+		MOV EVENTO,#04			; Se le asigna el evento 4
+		RET
+
+OBSTACULO:
+		MOV EVENTO,#05			; Se le asigna el evento 5
+		RET
+
+AVANCE:
+		MOV EVENTO,#06			; Se le asigna el evento 6
+		RET
+
+		
+
+AUT_DRA:					;_______________ESTADO 2: AUT_DRA_______________
+
+		ACALL 	GEN_EVE_AUT_DRA		; Funciona como el estado anterior, y funcionan todos igual
+		MOV 	A,EVENTO
+		RL 	A
+		MOV 	DPTR,#EVENTOS_AUT_DRA
+		JMP 	@A+DPTR
+		RET
+
+EVENTOS_AUT_DRA:
+		AJMP 	E2_EV0			; Estado 2 evento 0
+		AJMP 	E2_EV1			; Estado 2 evento 1
+		AJMP 	E2_EV2			; Estado 2 evento 2
+
+E2_EV0:
+		RET				; Evento cero, no hace nada
+
+E2_EV1:
+		MOV INDICE,#01			
+		ACALL VALORES_PWM		; Gracias al índice va a la tabla de valores para el PWM y toma el valor
+		MOV PWM0,A			; En este caso se la pasa el valor 80 que sería "mantener altura"
+
+		MOV INDICE,#01
+		ACALL VALORES_PWM		; Gracias al índice va a la tabla de valores para el PWM y toma el valor
+		MOV PWM1,A			; En este caso se la pasa el valor 80 que sería "giro/avance"
+
+		SETB GIR_AVA1			; Combinación de los bits Giro_Avance = "Avanza"
+		SETB GIR_AVA0
+				
+		MOV TCON,#10			; Apagar timer1	
+
+		MOV CONT3,#00			; Resetear el contador 3
+
+		MOV ESTADO,#01h			; Cambiar a estado 1
+		RET
+
+E2_EV2:
+		MOV INDICE,#03			
+		ACALL VALORES_PWM		; Gracias al índice va a la tabla de valores para el PWM y toma el valor
+		MOV PWM0,A			; En este caso se la pasa el valor 8B3 que sería "bajar"
+
+		MOV INDICE,#00
+		ACALL VALORES_PWM		; Gracias al índice va a la tabla de valores para el PWM y toma el valor
+		MOV PWM1,A			; En este caso se la pasa el valor FF que sería "parado"
+
+		CLR GIR_AVA1			; Combinación de los bits Giro_Avance = "Parado"
+		CLR GIR_AVA0
+
+		MOV TCON,#10			; Apagar timer1
+		CLR FLAG_8S			; Limpiar el flag de 8 segundos
+
+		MOV ESTADO,#05h			; Cambiar al estado 5
+		RET
+
+GEN_EVE_AUT_DRA:
+		MOV A,BATERIA
+		CLR C
+		SUBB A, #01h			; Restamos el valor 01h, que viene a ser un 6% en batería: ([(4,883*6)]/1000)/5)*1024=6d, en el ADCH = 01h
+		JC ATERRIZAJE2			; Si hay carry, es decir, el valor guardado en la batería es menor a 6, saltar
+		JB DES_ATE, ATERRIZAJE2	
+		MOV A,FRENTE
+		CLR C
+		SUBB A,#44h			; Restamos el valor 44h, que vienen a ser 0.8 metros: ([(16,667*80)]/1000)/5)*1024=273d, en el ADCH = 44h
+		JNC SALIR			; Si no hay carry, es decir, el valor guardado es mayor o igual 0.8, saltar	
+		JB FLAG_8S,ATERRIZAJE2		; Si esta activado el flag de 8 segundos, salta
+		MOV EVENTO,#00h			; Si no se da ninguna, evento cero
+		RET
+
+SALIR:
+		MOV EVENTO,#01h			; Se le asigna el evento 1
+		RET
+
+ATERRIZAJE2:
+		MOV EVENTO,#02h			; Se le asigna el evento 2
+		RET
+
+AUT_IZQ:					;_______________ESTADO 3: AUT_IZQ_______________
+
+		ACALL 	GEN_EVE_AUT_IZQ		; Funciona como el estado anterior, y funcionan todos igual
+		MOV 	A,EVENTO
+		RL 	A
+		MOV 	DPTR,#EVENTOS_AUT_IZQ
+		JMP 	@A+DPTR
+
+EVENTOS_AUT_IZQ:
+		AJMP E3_EV0			; Estado 3 evento 0
+		AJMP E3_EV1			; Estado 3 evento 1
+		AJMP E3_EV2			; Estado 3 evento 2
+
+E3_EV0:
+		RET				; Evento 0 no hace nada
+
+E3_EV1:
+		MOV INDICE,#01
+		ACALL VALORES_PWM		; Gracias al índice va a la tabla de valores para el PWM y toma el valor
+		MOV PWM0,A			; En este caso se la pasa el valor 80 que sería "mantener altura"
+
+		MOV INDICE,#01
+		ACALL VALORES_PWM		; Gracias al índice va a la tabla de valores para el PWM y toma el valor
+		MOV PWM1,A			; En este caso se la pasa el valor 80 que sería "giro/avance"
+
+		SETB GIR_AVA1			; Combinación de los bits Giro_Avance = "Avanza"
+		SETB GIR_AVA0							
+
+		MOV TCON,#10			; Apagar timer1
+		CLR FLAG_05S			; Limpiar flag medio segundo
+
+		MOV CONT3,#00			; Resetear el contador 3
+
+		MOV ESTADO,#01h			; Cambiar a estado 1
+		RET
+
+E3_EV2:
+		MOV INDICE,#03
+		ACALL VALORES_PWM		; Gracias al índice va a la tabla de valores para el PWM y toma el valor
+		MOV PWM0,A			; En este caso se la pasa el valor B3 que sería "bajar"
+
+		MOV INDICE,#00
+		ACALL VALORES_PWM		; Gracias al índice va a la tabla de valores para el PWM y toma el valor
+		MOV PWM1,A			; En este caso se la pasa el valor FF que sería "parado"
+
+		CLR GIR_AVA1			; Combinación de los bits Giro_Avance = "Parado"
+		CLR GIR_AVA0
+
+		MOV TCON,#10			; Apagar el timer1
+
+		MOV ESTADO,#05h			; Cambiar a estado 5
+		RET
+		
+	
+GEN_EVE_AUT_IZQ:
+		MOV A,BATERIA
+		CLR C
+		SUBB A, #01h			; Restamos el valor 01h, que viene a ser un 6% en batería: ([(4,883*6)]/1000)/5)*1024=6d, en el ADCH = 01h
+		JC ATERRIZAJE3			; Si hay carry, es decir, el valor guardado en la batería es menor a 6, saltar
+		JB DES_ATE,ATERRIZAJE3		; SI esta a 1 despegue/aterrizaje, saltar
+		JB FLAG_05S,SALIR2		; Si el flag esta encendido, salta
+		MOV EVENTO,#00h			; Si no, se le asigna evento cero
+		RET
+
+ATERRIZAJE3:
+		MOV EVENTO,#02			; Se le asigna el evento 2
+		RET
+
+SALIR2:
+		MOV EVENTO,#01h			; Se le asigna el evento 1
+		RET
+
+ATERRIZAJE:					;_______________ESTADO 5: ATERRIZAJE_______________
+
+		ACALL 	GEN_EVE_ATERRIZAJE	; Funciona como el estado anterior, y funcionan todos igual
+		MOV 	A,EVENTO
+		RL 	A
+		MOV 	DPTR,#EVENTOS_ATERRIZAJE
+		JMP 	@A+DPTR
+
+EVENTOS_ATERRIZAJE:
+		AJMP 	E5_EV0			; Estado 5 evento 0
+		AJMP 	E5_EV1			; Estado 5 evento 1
+
+E5_EV0:
+		RET
+
+E5_EV1:
+		MOV INDICE,#00
+		ACALL VALORES_PWM		; Gracias al índice va a la tabla de valores para el PWM y toma el valor
+		MOV PWM0,A			; En este caso se la pasa el valor FF que sería "parado"
+
+		MOV INDICE,#00
+		ACALL VALORES_PWM		; Gracias al índice va a la tabla de valores para el PWM y toma el valor
+		MOV PWM1,A			; En este caso se la pasa el valor FF que sería "parado"
+
+		CLR GIR_AVA1			; Combinación de los bits Giro_Avance = "Parado"
+		CLR GIR_AVA0
+
+		MOV TCON,#00
+
+		MOV ESTADO,#00			; Se cambia al estado 0
+		RET
+
+GEN_EVE_ATERRIZAJE:
+		MOV A,ALTURA
+		CLR C
+		SUBB A,#01h			; Restamos el valor 01h, que vienen a ser 0.01m: ([(16.667*1)]/1000)/5)*1024=4d, en el ADCH = 01h
+		JC EVE_ATERRIZAR		; Si hay carry, es decir, el valor guardado es menor a 0.01, saltar
+		MOV EVENTO,#00			; Sino, se le asigna el evento 0
+		RET
+
+EVE_ATERRIZAR:
+		MOV EVENTO,#01h			; Se le asigna el evento 1
+		RET
+
+
+MANUAL:						;_______________ESTADO 4: MANUAL_______________
+
+		ACALL 	GEN_EVE_MANUAL		; Funciona como el estado anterior, y funcionan todos igual
+		MOV 	A,EVENTO
+		RL 	A
+		MOV 	DPTR,#EVENTOS_MANUAL
+		JMP 	@A+DPTR
+
+EVENTOS_MANUAL:
+		AJMP 	E4_EV0			; Estado 4 evento 0
+		AJMP  	E4_EV1			; Estado 4 evento 1
+		AJMP  	E4_EV2			; Estado 4 evento 2
+		AJMP  	E4_EV3			; Estado 4 evento 3
+		AJMP  	E4_EV4			; Estado 4 evento 4
+		AJMP  	E4_EV5			; Estado 4 evento 5
+		AJMP  	E4_EV6			; Estado 4 evento 6
+		AJMP  	E4_EV7			; Estado 4 evento 7
+		AJMP  	E4_EV8			; Estado 4 evento 8
+		AJMP  	E4_EV9			; Estado 4 evento 9
+		AJMP  	E4_EV10			; Estado 4 evento 10
+		AJMP  	E4_EV11			; Estado 4 evento 11
+		AJMP  	E4_EV12			; Estado 4 evento 12
+		AJMP  	E4_EV13			; Estado 4 evento 13
+		AJMP  	E4_EV14			; Estado 4 evento 14
+
+E4_EV0:
+		RET				; Evento cero, no hace nada
+	
+E4_EV1:
+		MOV INDICE,#01
+		ACALL VALORES_PWM		; Gracias al índice va a la tabla de valores para el PWM y toma el valor
+		MOV PWM0,A			; En este caso se la pasa el valor 80 que sería "mantener altura"
+
+		MOV INDICE,#00
+		ACALL VALORES_PWM		; Gracias al índice va a la tabla de valores para el PWM y toma el valor
+		MOV PWM1,A			; En este caso se la pasa el valor FF que sería "parado"
+
+		CLR GIR_AVA1			; Combinación de los bits Giro_Avance = "Parado"
+		CLR GIR_AVA0
+		RET
+
+E4_EV2:
+		MOV INDICE,#03
+		ACALL VALORES_PWM		; Gracias al índice va a la tabla de valores para el PWM y toma el valor
+		MOV PWM0,A			; En este caso se la pasa el valor B3 que sería "bajar"
+
+		MOV INDICE,#00
+		ACALL VALORES_PWM		; Gracias al índice va a la tabla de valores para el PWM y toma el valor
+		MOV PWM1,A			; En este caso se la pasa el valor FF que sería "parado"
+
+		CLR GIR_AVA1			; Combinación de los bits Giro_Avance = "Parado"
+		CLR GIR_AVA0
+		RET
+
+E4_EV3:
+		MOV INDICE,#02
+		ACALL VALORES_PWM		; Gracias al índice va a la tabla de valores para el PWM y toma el valor
+		MOV PWM0,A			; En este caso se la pasa el valor 4D que sería "sube"
+
+		MOV INDICE,#00
+		ACALL VALORES_PWM		; Gracias al índice va a la tabla de valores para el PWM y toma el valor
+		MOV PWM1,A			; En este caso se la pasa el valor FF que sería "parado"
+
+		CLR GIR_AVA1			; Combinación de los bits Giro_Avance = "Parado"
+		CLR GIR_AVA0
+		RET
+
+E4_EV4:
+		MOV INDICE,#01
+		ACALL VALORES_PWM		; Gracias al índice va a la tabla de valores para el PWM y toma el valor
+		MOV PWM0,A				; En este caso se la pasa el valor 80 que sería "mantener altura"			
+
+		MOV INDICE,#01
+		ACALL VALORES_PWM		; Gracias al índice va a la tabla de valores para el PWM y toma el valor
+		MOV PWM1,A			; En este caso se la pasa el valor 80 que sería "giro/avance"
+
+		CLR GIR_AVA1			; Combinación de los bits Giro_Avance = "Giro_izda"
+		SETB GIR_AVA0
+		RET
+
+E4_EV5:
+		MOV INDICE,#03
+		ACALL VALORES_PWM		; Gracias al índice va a la tabla de valores para el PWM y toma el valor
+		MOV PWM0,A			; En este caso se la pasa el valor B3 que sería "bajar"
+
+		MOV INDICE,#01
+		ACALL VALORES_PWM		; Gracias al índice va a la tabla de valores para el PWM y toma el valor
+		MOV PWM1,A			; En este caso se la pasa el valor 80 que sería "giro/avance"
+
+		CLR GIR_AVA1			; Combinación de los bits Giro_Avance = "Giro_izda"
+		SETB GIR_AVA0
+		RET
+
+E4_EV6:
+		MOV INDICE,#02
+		ACALL VALORES_PWM		; Gracias al índice va a la tabla de valores para el PWM y toma el valor
+		MOV PWM0,A			; En este caso se la pasa el valor 4D que sería "sube"
+
+		MOV INDICE,#01
+		ACALL VALORES_PWM		; Gracias al índice va a la tabla de valores para el PWM y toma el valor
+		MOV PWM1,A			; En este caso se la pasa el valor 80 que sería "giro/avance"
+
+		CLR GIR_AVA1			; Combinación de los bits Giro_Avance = "Giro_izda"
+		SETB GIR_AVA0
+		RET
+
+
+E4_EV7:
+		MOV INDICE,#01
+		ACALL VALORES_PWM		; Gracias al índice va a la tabla de valores para el PWM y toma el valor
+		MOV PWM0,A			; En este caso se la pasa el valor 80 que sería "mantener altura"
+
+		MOV INDICE,#01
+		ACALL VALORES_PWM		; Gracias al índice va a la tabla de valores para el PWM y toma el valor
+		MOV PWM1,A			; En este caso se la pasa el valor 80 que sería "giro/avance"
+
+		SETB GIR_AVA1			; Combinación de los bits Giro_Avance = "Giro_dcha"
+		CLR GIR_AVA0
+		RET
+
+E4_EV8:
+		MOV INDICE,#03
+		ACALL VALORES_PWM		; Gracias al índice va a la tabla de valores para el PWM y toma el valor
+		MOV PWM0,A			; En este caso se la pasa el valor B3 que sería "bajar"
+
+		MOV INDICE,#01
+		ACALL VALORES_PWM		; Gracias al índice va a la tabla de valores para el PWM y toma el valor
+		MOV PWM1,A			; En este caso se la pasa el valor 80 que sería "giro/avance"
+
+		SETB GIR_AVA1			; Combinación de los bits Giro_Avance = "Giro_dcha"	
+		CLR GIR_AVA0
+		RET
+
+E4_EV9:
+		MOV INDICE,#02
+		ACALL VALORES_PWM		; Gracias al índice va a la tabla de valores para el PWM y toma el valor
+		MOV PWM0,A			; En este caso se la pasa el valor 4D que sería "sube"
+
+		MOV INDICE,#01
+		ACALL VALORES_PWM		; Gracias al índice va a la tabla de valores para el PWM y toma el valor
+		MOV PWM1,A			; En este caso se la pasa el valor 80 que sería "giro/avance"
+
+		SETB GIR_AVA1			; Combinación de los bits Giro_Avance = "Giro_dcha"
+		CLR GIR_AVA0
+		RET
+
+E4_EV10:
+		MOV INDICE,#01
+		ACALL VALORES_PWM		; Gracias al índice va a la tabla de valores para el PWM y toma el valor
+		MOV PWM0,A			; En este caso se la pasa el valor 80 que sería "mantener altura"
+
+		MOV INDICE,#01
+		ACALL VALORES_PWM		; Gracias al índice va a la tabla de valores para el PWM y toma el valor
+		MOV PWM1,A			; En este caso se la pasa el valor 80 que sería "gira/avanza"
+
+		SETB GIR_AVA1			; Combinación de los bits Giro_Avance = "Avanza"
+		SETB GIR_AVA0
+		RET
+
+E4_EV11:
+		MOV INDICE,#03
+		ACALL VALORES_PWM		; Gracias al índice va a la tabla de valores para el PWM y toma el valor
+		MOV PWM0,A			; En este caso se la pasa el valor B3 que sería "bajar"
+
+		MOV INDICE,#01
+		ACALL VALORES_PWM		; Gracias al índice va a la tabla de valores para el PWM y toma el valor
+		MOV PWM1,A			; En este caso se la pasa el valor 80 que sería "gira/avanza"
+
+		SETB GIR_AVA1			; Combinación de los bits Giro_Avance = "Avanza"
+		SETB GIR_AVA0
+		RET
+
+E4_EV12:
+		MOV INDICE,#02
+		ACALL VALORES_PWM		; Gracias al índice va a la tabla de valores para el PWM y toma el valor
+		MOV PWM0,A			; En este caso se la pasa el valor 4D que sería "sube"
+
+		MOV INDICE,#01
+		ACALL VALORES_PWM		; Gracias al índice va a la tabla de valores para el PWM y toma el valor
+		MOV PWM1,A			; En este caso se la pasa el valor 80 que sería "gira/avanza"
+
+		SETB GIR_AVA1			; Combinación de los bits Giro_Avance = "Avanza"
+		SETB GIR_AVA0
+		RET
+
+E4_EV13:
+		MOV INDICE,#03
+		ACALL VALORES_PWM		; Gracias al índice va a la tabla de valores para el PWM y toma el valor
+		MOV PWM0,A			; En este caso se la pasa el valor B3 que sería "bajar"
+
+		MOV INDICE,#00
+		ACALL VALORES_PWM		; Gracias al índice va a la tabla de valores para el PWM y toma el valor
+		MOV PWM1,A			; En este caso se la pasa el valor FF que sería "parado"
+
+		CLR GIR_AVA1			; Combinación de los bits Giro_Avance = "Parado"
+		CLR GIR_AVA0
+
+		MOV ESTADO,#05h
+		RET
+
+E4_EV14:
+		MOV INDICE,#01
+		ACALL VALORES_PWM		; Gracias al índice va a la tabla de valores para el PWM y toma el valor
+		MOV PWM0,A			; En este caso se la pasa el valor 80 que sería "mantener altura"
+
+		MOV INDICE,#00
+		ACALL VALORES_PWM		; Gracias al índice va a la tabla de valores para el PWM y toma el valor
+		MOV PWM1,A			; En este caso se la pasa el valor FF que sería "parado"
+
+		CLR GIR_AVA1			; Combinación de los bits Giro_Avance = "Parado"
+		CLR GIR_AVA0
+
+		MOV CONT3,#00			; Resetar contador 3
+		CLR FLAG_25S			; Limpiar flag 25 segundos
+
+		MOV ESTADO,#01h			; Cambiar a estado 1
+		RET
+	
+GEN_EVE_MANUAL:
+		MOV A,BATERIA
+		CLR C
+		SUBB A, #01h			; Restamos el valor 01h, que viene a ser un 6% en batería: ([(4,883*6)]/1000)/5)*1024=6d, en el ADCH = 01h			
+		JC ATERRIZAR			; Si hay carry, es decir, el valor guardado en la batería es menor a 6, saltar
+		JB DES_ATE,ATERRIZAR		; Si despegue/aterrizaje está a 1, salta
+		JNB AUT_MAN,AUTOMATICO_EVE	; Si el seleccionador de modo está a 0, salta
+		JNB PAR_AVA,SIN_AVANCE		; Si para/avanza está a 0, salta
+		JNB G_DCHA,NO_DCHA2		; Si giro derecha está a 0, salta
+		JNB G_IZDA,NO_IZDA4		; Si giro izquierda está a 0, salta
+		JNB SUBE,NO_SUBE8		; Si sube está a 0, salta
+		JNB BAJA,NO_BAJA16		; Si baja está a cero, salta
+		MOV EVENTO,#01			; Sino, se le asigna el evento 10
+		JMP COMPARACION			; Se salta a comparación para el caso de que el evento se repita
+
+ATERRIZAR:
+		MOV EVENTO,#0Dh
+		RET
+
+AUTOMATICO_EVE:
+		MOV EVENTO,#0Eh
+		RET
+
+NO_BAJA16:
+		MOV EVENTO,#03h
+		JMP COMPARACION
+
+NO_SUBE8:
+		JNB BAJA,NO_BAJA15
+		MOV EVENTO,#02
+		JMP COMPARACION
+
+NO_BAJA15:
+		MOV EVENTO,#01
+		JMP COMPARACION
+
+NO_IZDA4:
+		JNB SUBE,NO_SUBE7
+		JNB BAJA,NO_BAJA14
+		MOV EVENTO,#07
+		JMP COMPARACION
+
+NO_BAJA14:
+		MOV EVENTO,#09
+		JMP COMPARACION
+
+NO_SUBE7:
+		JNB BAJA,NO_BAJA13
+		MOV EVENTO,#08h
+		JMP COMPARACION
+
+NO_BAJA13:
+		MOV EVENTO,#07
+		JMP COMPARACION
+
+NO_DCHA2:
+		JNB G_IZDA,NO_IZDA3
+		JNB SUBE,NO_SUBE6
+		JNB BAJA,NO_BAJA12
+		MOV EVENTO,#04
+		JMP COMPARACION
+
+NO_BAJA12:
+		MOV EVENTO,#06	
+		JMP COMPARACION																																																							
+
+
+NO_SUBE6:
+		JNB BAJA,NO_BAJA11
+		MOV EVENTO,#05h
+		JMP COMPARACION
+
+NO_BAJA11:
+		MOV EVENTO,#04
+		JMP COMPARACION
+
+NO_IZDA3:
+		JNB SUBE,NO_SUBE5
+		JNB BAJA,NO_BAJA10
+		MOV EVENTO,#01h
+		JMP COMPARACION
+
+NO_BAJA10:
+		MOV EVENTO,#0Ch
+		JMP COMPARACION
+
+NO_SUBE5:
+		JNB BAJA,NO_BAJA9
+		MOV EVENTO,#0Bh
+		JMP COMPARACION
+
+NO_BAJA9:
+		MOV EVENTO,#0Ah
+		JMP COMPARACION
+
+SIN_AVANCE:
+		JNB G_DCHA,NO_DCHA
+		JNB G_IZDA,NO_IZDA2
+		JNB SUBE,NO_SUBE4
+		JNB BAJA,NO_BAJA8
+		MOV EVENTO,#01h
+		JMP COMPARACION
+
+NO_BAJA8:
+		MOV EVENTO,03h
+		JMP COMPARACION
+
+NO_SUBE4:
+		JNB BAJA,NO_BAJA7
+		MOV EVENTO,#02h
+		JMP COMPARACION
+
+NO_BAJA7:
+		MOV EVENTO,#01h
+		JMP COMPARACION
+
+NO_IZDA2:
+		JNB SUBE,NO_SUBE3
+		JNB BAJA,NO_BAJA6
+		MOV EVENTO,#07
+		JMP COMPARACION
+
+NO_BAJA6:
+		MOV EVENTO,#09h
+		JMP COMPARACION
+
+NO_SUBE3:
+		JNB BAJA,NO_BAJA5
+		MOV EVENTO,#08
+		JMP COMPARACION
+
+NO_BAJA5:
+		MOV EVENTO,#07h
+		JMP COMPARACION
+
+NO_DCHA:
+		JNB G_IZDA,NO_IZDA
+		JNB SUBE,NO_SUBE2
+		JNB BAJA,NO_BAJA4
+		MOV EVENTO,#04h
+		JMP COMPARACION
+
+NO_BAJA4:
+		MOV EVENTO,#06h	
+		JMP COMPARACION																																																							
+
+
+NO_SUBE2:
+		JNB BAJA,NO_BAJA3
+		MOV EVENTO,#05h
+		JMP COMPARACION
+
+NO_BAJA3:
+		MOV EVENTO,#04h
+		JMP COMPARACION
+
+NO_IZDA:
+		JNB SUBE,NO_SUBE
+		JNB BAJA,NO_BAJA2
+		MOV EVENTO,#01h
+		JMP COMPARACION
+
+NO_BAJA2:
+		MOV EVENTO,#03h
+		JMP COMPARACION
+
+NO_SUBE:
+		JNB BAJA,NO_BAJA
+		MOV EVENTO,#02h
+		JMP COMPARACION
+
+NO_BAJA:
+		MOV EVENTO,#01h
+		JMP COMPARACION
+
+COMPARACION:
+		MOV A,EVENTO_ANT
+		CLR C
+		SUBB A,EVENTO
+		JZ EVENTO_0
+		MOV A,EVENTO
+		MOV EVENTO_ANT,A
+		RET
+
+EVENTO_0:
+		MOV EVENTO,#00
+		RET
+
+
+VALORES_PWM:
+		MOV	A,INDICE			
+		INC	A
+        	MOVC    A,@A+PC          	; Usamos el movc
+        	RET
+		DB     0XFF 	                ; Definimos el bit del PWM0 (D=0)	                       	
+		DB     0X80 	                ; D= 1-(80/FF)=0.5	
+		DB     0X4D 	                ; D= 1-(4D/FF)= 0.7
+		DB     0XB3			; D= 1-(B3/FF)= 0.3
+
+
+ENCENDER_TIMER0:
+		MOV TH0,#0xB1 			; Recarga timer0
+ 		MOV TL0,#0xE0
+		MOV TCON,#0x10			; Timer0 ON
+		RET
+
+ENCENDER_TIMER1:
+		MOV TH1,#0xB1 			; Recarga timer1
+ 		MOV TL1,#0xE0
+		MOV TCON,#0x50			; Timer0 y 1 ON, cuando el uno esté encendido, el cero también
+		RET
+
+TIMER0_INT_SB:					;_______________INTERRUPCION DEL TIMER 0_______________
+
+ 		PUSH ACC 			; Guardar contexto
+ 		PUSH PSW 	
+ 		MOV TH0,#0xB1 			; Recarga del timer 0
+ 		MOV TL0,#0xE0
+		ACALL DIEZ_MS			; La interrupción se da cada 10ms, saltamos a una etiqueta que nos diga lo que hacer 
+		POP PSW
+		POP ACC				; Recuperar contexto
+		RETI				; RETI, como un RET pero resetea las prioridades de la rutina de atención a la interrupción
+
+DIEZ_MS:
+		MOV A,#0			; Canal cero altura
+		ACALL CONV_ADC			; Hacemos la lectura del ADC
+		MOV ALTURA,A			; Movemos el valor leído a nuestra variable
+		MOV A,#1			; Canal uno frente
+		ACALL CONV_ADC			; Hacemos la lectura del ADC
+		MOV FRENTE,A			; Movemos el valor leído a nuestra variable
+		INC CONT1			; Incrementamos el contador1
+		MOV A,CONT1
+		CLR C
+		SUBB A,#64h			; Le restamos 64h, veáse 100d
+		JZ UN_SEG			; Si es cero, ha pasado un segundo; 10ms*100=1000ms=1s
+		RET
+
+UN_SEG:
+		MOV CONT1,#00			; Bajamos el contador1 a cero
+		INC CONT2			; Incrementamos los contadores 2 y 3
+		INC CONT3
+		MOV A,CONT2
+		CLR C
+		SUBB A,#0Ah			; Restamos 0Ah, veáse 10d
+		ACALL DIEZ_SEG			; Si es cero, han pasado diez segundos; 1s*10=10s
+		MOV A,CONT3
+		CLR C
+		SUBB A,#19h			; Restamos 19h, veáse 25d
+		JZ VEINTICINCO_SEG		; Si es cero, han pasado 25 segundos; 1s*25=25s
+		RET				; Si no se da ningun caso volvemos
+
+DIEZ_SEG:
+		MOV CONT2,#00			; Bajamos el contador2 a cero
+		MOV A,#2			; Canal tres bateria
+		ACALL CONV_ADC			; Hacemos la lectura del ADC
+		MOV BATERIA,A			; Guardamos el valor leído
+		ACALL LED_BATERIA		; Rutina encargada de encender los leds
+		ACALL DISPLAY			; Rutina encargada de obtener el índice que se utilizará para obtener el valor de SIETE_SEG
+		ACALL VALORES_7SEG		; Obtención del valor utilizando el índice
+		MOV SIETE_SEG,A			; Guardar el valor en la variable
+		JB AUT_MAN,ESTA_MAN		; Si el sistema está en manual hay que cambiar el ultimo bit
+		RET
+
+VEINTICINCO_SEG:
+		MOV CONT3,#00			; Bajamos el contador tres a cero
+		SETB FLAG_25S			; Encendemos el flag de 25 segundos
+		RET	
+
+
+
+
+
+CONV_ADC:
+		ANL ADCON,#0xEF 		; ADCI=0
+		MOV ADCON,A			; Elegir canal
+ 		ORL ADCON,#08H 			; Encender ADCS 
+
+EOC:
+ 		MOV A,ADCON 			; Movemos el ADCON a A
+ 		JNB ACC.4,EOC 			; Mientras el bit de interrupción del ADC no se encienda, se quede en bucle
+ 		MOV A,ADCH 			; Movemos a A el valor recogido (SOLO LOS 8 BITS MÁS SIGNIFICANTES)
+ 		RET
+
+
+
+LED_BATERIA:
+		MOV A,BATERIA
+		CLR C
+		SUBB A,#02h			; Restamos el valor 02h, que viene a ser un 10% en batería: ([(16,667*10)]/1000)/5)*1024=10d, en el ADCH = 02h
+		JNC ENCENDER_VERDE		; Si no hay carry, es decir, el valor guardado en la batería es mayor a 02h, saltar
+		CLR LED_VERDE			; La batería es menor a 02h, por tanto menor al 10%, apagamos led verde
+		SETB LED_ROJO			; Y encendemos led rojo
+		RET
+
+ENCENDER_VERDE:
+		SETB LED_VERDE			; Ecendemos led verde
+		CLR LED_ROJO			; Apagamos led rojo
+		RET
+
+ESTA_MAN:
+		MOV A,SIETE_SEG			; Movemos el valor a A
+		ANL A,#0xFE			; Cambiamos el último bit a cero
+		MOV SIETE_SEG,A			; Recuperamos el valor
+		RET
+
+DISPLAY:
+		MOV A,BATERIA			; A continuación viene una sucesión para obtener el rango en el que esta la batería
+		CLR C
+		SUBB A,#18h			; Restamos el valor 18h, que viene a ser un 96% en batería: ([(4,883*96)]/1000)/5)*1024=96d, en el ADCH = 18h
+		JNC FULL			; Si no hay carry, es decir, el valor guardado en la batería es mayor o igual a 96, saltar
+		MOV A,BATERIA
+		CLR C
+		SUBB A,#15h			; Restamos el valor 15h, que viene a ser un 86% en batería: ([(4,883*86)]/1000)/5)*1024=86d, en el ADCH = 15h
+		JNC NUEVE			; Si no hay carry, es decir, el valor guardado en la batería es mayor o igual a 86, saltar
+		MOV A,BATERIA
+		CLR C
+		SUBB A,#13h			; Restamos el valor 13h, que viene a ser un 76% en batería: ([(4,883*76)]/1000)/5)*1024=76d, en el ADCH = 13h
+		JNC OCHO			; Si no hay carry, es decir, el valor guardado en la batería es mayor o igual a 76, saltar
+		MOV A,BATERIA
+		CLR C
+		SUBB A,#10h			; Restamos el valor 10h, que viene a ser un 66% en batería: ([(4,883*66)]/1000)/5)*1024=66d, en el ADCH = 10h
+		JNC SIETE			; Si no hay carry, es decir, el valor guardado en la batería es mayor o igual a 66, saltar
+		MOV A,BATERIA
+		CLR C
+		SUBB A,#0Eh			; Restamos el valor 0Eh, que viene a ser un 56% en batería: ([(4,883*56)]/1000)/5)*1024=56d, en el ADCH = 0Eh
+		JNC SEIS			; Si no hay carry, es decir, el valor guardado en la batería es mayor o igual a 56, saltar
+		MOV A,BATERIA
+		CLR C
+		SUBB A,#0Bh			; Restamos el valor 0Bh, que viene a ser un 46% en batería: ([(4,883*46)]/1000)/5)*1024=46d, en el ADCH = 0Bh
+		JNC CINCO			; Si no hay carry, es decir, el valor guardado en la batería es mayor o igual a 46, saltar
+		MOV A,BATERIA
+		CLR C
+		SUBB A,#09h			; Restamos el valor 09h, que viene a ser un 36% en batería: ([(4,883*36)]/1000)/5)*1024=36d, en el ADCH = 09h
+		JNC CUATRO			; Si no hay carry, es decir, el valor guardado en la batería es mayor o igual a 36, saltar
+		MOV A,BATERIA
+		CLR C
+		SUBB A,#06h			; Restamos el valor 06h, que viene a ser un 26% en batería: ([(4,883*26)]/1000)/5)*1024=26d, en el ADCH = 06h
+		JNC TRES			; Si no hay carry, es decir, el valor guardado en la batería es mayor o igual a 26, saltar
+		MOV A,BATERIA
+		CLR C
+		SUBB A,#04h			; Restamos el valor 04h, que viene a ser un 16% en batería: ([(4,883*16)]/1000)/5)*1024=16d, en el ADCH = 04h
+		JNC DOS				; Si no hay carry, es decir, el valor guardado en la batería es mayor o igual a 16, saltar
+		MOV A,BATERIA
+		CLR C
+		SUBB A,#01h			; Restamos el valor 01h, que viene a ser un 6% en batería: ([(4,883*6)]/1000)/5)*1024=6d, en el ADCH = 01h
+		JNC UNO				; Si no hay carry, es decir, el valor guardado en la batería es mayor o igual a 6, saltar
+		MOV INDICE,#00h			; Si la bateria es menor a seis, el índice toma el valor 0
+		RET
+
+FULL:
+		MOV INDICE,#0Ah			; El índice toma el valor 10
+		RET
+NUEVE:
+		MOV INDICE,#09h			; El índice toma el valor 9
+		RET
+OCHO:
+		MOV INDICE,#08h			; El índice toma el valor 8
+		RET
+SIETE:
+		MOV INDICE,#07h			; El índice toma el valor 7
+		RET
+SEIS:
+		MOV INDICE,#06h			; El índice toma el valor 6
+		RET
+CINCO:
+		MOV INDICE,#05h			; El índice toma el valor 5
+		RET
+CUATRO:
+		MOV INDICE,#04h			; El índice toma el valor 4
+		RET
+TRES:
+		MOV INDICE,#03h			; El índice toma el valor 3
+		RET
+DOS:
+		MOV INDICE,#02h			; El índice toma el valor 2
+		RET
+UNO:
+		MOV INDICE,#01h			; El índice toma el valor 1
+		RET
+
+VALORES_7SEG:
+		MOV A,INDICE			; Con estas instrucciones hacemos que en A se guarde un valor de la tabla, correspondiente al indice desde 0 a 10
+		INC A
+		MOVC A,@A+PC
+		RET
+		DB 00011101b			; L
+		DB 01100001b			; 1
+		DB 11011011b			; 2
+		DB 11110011b			; 3
+		DB 01100111b			; 4
+		DB 10110111b			; 5
+		DB 10111111b			; 6
+		DB 11100001b			; 7
+		DB 11111111b			; 8
+		DB 11110111b			; 9
+		DB 10001111b			; F
+
+
+
+		
+TIMER1_INT_SB:					;_______________INTERRUPCION DEL TIMER 1_______________
+
+ 		PUSH ACC 			; Guardar Contexto
+ 		PUSH PSW
+	
+ 		MOV TH1,#0xB1 			; Recarga TIMER1
+ 		MOV TL1,#0xE0
+		INC CONT4			; Incrementamos el contador 4
+		MOV A,CONT4
+		CLR C
+		SUBB A,#32h			; Restamos 32h, veáse 50d, al igual que la del timer0 la interrupción se da cada 10ms, 10ms*50=500ms=0,5s
+		JZ MEDIO_SEGUNDO		; Si es cero, salta
+		
+		POP PSW
+		POP ACC				; Recuperar contexto
+		RETI
+
+
+MEDIO_SEGUNDO:
+		MOV CONT4,#00			; Bajamos el contador4 a cero
+		SETB FLAG_05S			; Encendemos el flag de medio segundo
+		INC CONT5			; Incrementamos el contador5
+		MOV A,CONT5
+		CLR C
+		SUBB A,#10h			; Restamos 10h, veáse 16d, 0,5s*16=8s
+		JZ OCHO_SEG			; Si es cero, salta
+		RET
+
+OCHO_SEG:
+		MOV CONT5,#00			; Bajamos a cero el contador5
+		SETB FLAG_8S			; Encendemos el flag de 8 segundos
+		RET
+		
+
+END
